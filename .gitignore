@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+data/
+spark-warehouse/
+metastore_db/
+derby.log
+.databricks/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!example.tfvars

@@ -1,0 +1,48 @@
+[project]
+name = "card-payments-lakehouse"
+version = "0.1.0"
+description = "Bronze, silver and gold card-payments lakehouse on Azure Databricks, built with Terraform."
+readme = "README.md"
+# Matches Databricks Runtime 17.3 LTS: Python 3.12, Spark 4.0, Delta Lake 4.0.
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.optional-dependencies]
+# Databricks provides Spark and Delta, so they are only installed for local work and CI.
+local = ["pyspark==4.0.1", "delta-spark==4.0.1"]
+
+[project.scripts]
+lakehouse = "lakehouse.cli:main"
+
+[dependency-groups]
+dev = ["chispa>=0.10", "mypy>=1.11", "pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lakehouse"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+files = ["src"]
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["delta: needs Delta Lake jars, which CI downloads from Maven Central"]
+filterwarnings = ["ignore::DeprecationWarning"]

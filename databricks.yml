@@ -1,0 +1,116 @@
+# Databricks bundle: the wheel and the jobs that run it.
+#
+#   databricks bundle validate -t dev
+#   databricks bundle deploy -t dev
+#   databricks bundle run generate_source -t dev
+#   databricks bundle run daily_batch -t dev --params batch_date=2026-01-01
+
+bundle:
+  name: payments-lakehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog created by infra/databricks.
+    default: payments
+  landing_root:
+    description: landing_url output from infra/azure, without the trailing slash.
+  cluster_policy_id:
+    description: jobs_cluster_policy_id output from infra/databricks.
+  spark_version:
+    default: 17.3.x-scala2.13
+  node_type:
+    default: Standard_D4ds_v5
+
+artifacts:
+  lakehouse:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+resources:
+  jobs:
+    generate_source:
+      name: payments-generate-source
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster: &cluster
+            policy_id: ${var.cluster_policy_id}
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 2
+            data_security_mode: SINGLE_USER
+      tasks:
+        - task_key: generate
+          job_cluster_key: main
+          python_wheel_task:
+            package_name: card_payments_lakehouse
+            entry_point: lakehouse
+            # 30 days of 4 million transactions is 120 million rows, plus defects.
+            parameters: [generate, --landing, "${var.landing_root}", --start, "2026-01-01",
+                         --days, "30", --rows, "4000000", --customers, "2000000",
+                         --merchants, "50000"]
+          libraries:
+            - whl: ./dist/*.whl
+
+    daily_batch:
+      name: payments-daily-batch
+      max_concurrent_runs: 1 # the SCD2 merge must see batch dates in order
+      parameters:
+        - name: batch_date
+          default: "{{job.start_time.iso_date}}"
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster: *cluster
+      tasks:
+        - task_key: run_batch
+          job_cluster_key: main
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          python_wheel_task:
+            package_name: card_payments_lakehouse
+            entry_point: lakehouse
+            parameters: [run-batch, --backend, delta, --catalog, "${var.catalog}",
+                         --landing, "${var.landing_root}", --date, "{{job.parameters.batch_date}}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+    governance:
+      name: payments-apply-governance
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster: *cluster
+      tasks:
+        - task_key: apply
+          job_cluster_key: main
+          python_wheel_task:
+            package_name: card_payments_lakehouse
+            entry_point: lakehouse
+            parameters: [apply-governance, --catalog, "${var.catalog}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+    maintenance:
+      name: payments-maintenance
+      schedule:
+        quartz_cron_expression: "0 17 4 ? * SUN" # Sundays at 04:17 UTC
+        timezone_id: UTC
+        pause_status: PAUSED # unpause once the pipeline runs daily
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster: *cluster
+      tasks:
+        - task_key: optimize_and_vacuum
+          job_cluster_key: main
+          python_wheel_task:
+            package_name: card_payments_lakehouse
+            entry_point: lakehouse
+            parameters: [maintain, --catalog, "${var.catalog}"]
+          libraries:
+            - whl: ./dist/*.whl
+
+targets:
+  dev:
+    mode: development # prefixes resource names and pauses schedules
+    default: true
+  prod:
+    mode: production
